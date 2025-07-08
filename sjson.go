@@ -580,12 +580,7 @@ func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 	}
 
 	// Handle nested wildcards by processing each level separately
-	if containsMultipleWildcards(path) {
-		return setNestedWildcards(jstr, path, raw, stringify)
-	}
-
-	// For single wildcards, if we get an empty result but the path contains #, proceed anyway
-	if res.Index == 0 && len(res.Indexes) == 0 && containsSimpleWildcard(path) {
+	if countSimpleWildcards(path) > 1 || (res.Index == 0 && len(res.Indexes) == 0 && countSimpleWildcards(path) == 1) {
 		return setNestedWildcards(jstr, path, raw, stringify)
 	}
 
@@ -634,7 +629,7 @@ func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 	return []byte(jstr), nil
 }
 
-func containsMultipleWildcards(path string) bool {
+func countSimpleWildcards(path string) int {
 	count := 0
 	for i := 0; i < len(path); i++ {
 		if path[i] == '#' {
@@ -655,39 +650,10 @@ func containsMultipleWildcards(path string) bool {
 				}
 			} else {
 				count++
-				if count > 1 {
-					return true
-				}
 			}
 		}
 	}
-	return false
-}
-
-func containsSimpleWildcard(path string) bool {
-	for i := 0; i < len(path); i++ {
-		if path[i] == '#' {
-			// Skip conditional selectors like #(condition)
-			if i+1 < len(path) && path[i+1] == '(' {
-				// Find the closing parenthesis
-				depth := 1
-				for j := i + 2; j < len(path) && depth > 0; j++ {
-					if path[j] == '(' {
-						depth++
-					} else if path[j] == ')' {
-						depth--
-					}
-					if depth == 0 {
-						i = j // Skip past the conditional selector
-						break
-					}
-				}
-			} else {
-				return true // Found a simple wildcard
-			}
-		}
-	}
-	return false
+	return count
 }
 
 func setNestedWildcards(jstr, path, raw string, stringify bool) ([]byte, error) {
