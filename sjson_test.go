@@ -559,3 +559,55 @@ func TestWildcardWithRawValues(t *testing.T) {
 		t.Fatalf("expected '%v', got '%v'", expected, result)
 	}
 }
+
+func TestUserIssueNestedWildcard(t *testing.T) {
+	// User's specific test case
+	json := `[{"env": [{"name": "AWS_ACCESS_KEY_ID", "value": "test"}]}]`
+	expected := `[{"env": [{"name": "AWS_ACCESS_KEY_ID", "value": "newvalue"}]}]`
+
+	result, err := Set(json, "#.env.#.value", "newvalue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result) != sortJSON(expected) {
+		t.Fatalf("expected '%v', got '%v'", expected, result)
+	}
+}
+
+func TestRootArrayWildcards(t *testing.T) {
+	// Test simple root array wildcard
+	json := `[{"name":"John"},{"name":"Jane"}]`
+	expected := `[{"name":"Updated"},{"name":"Updated"}]`
+
+	result, err := Set(json, "#.name", "Updated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result) != sortJSON(expected) {
+		t.Fatalf("expected '%v', got '%v'", expected, result)
+	}
+
+	// Test root array with nested arrays
+	json2 := `[{"items":[{"id":1},{"id":2}]},{"items":[{"id":3}]}]`
+	expected2 := `[{"items":[{"id":99},{"id":99}]},{"items":[{"id":99}]}]`
+
+	result2, err := Set(json2, "#.items.#.id", 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result2) != sortJSON(expected2) {
+		t.Fatalf("expected '%v', got '%v'", expected2, result2)
+	}
+
+	// Test adding new properties with root array wildcard
+	json3 := `[{"name":"John"},{"name":"Jane"}]`
+	expected3 := `[{"name":"John","age":30},{"name":"Jane","age":30}]`
+
+	result3, err := Set(json3, "#.age", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result3) != sortJSON(expected3) {
+		t.Fatalf("expected '%v', got '%v'", expected3, result3)
+	}
+}

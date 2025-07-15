@@ -667,7 +667,13 @@ func setNestedWildcards(jstr, path, raw string, stringify bool) ([]byte, error) 
 	firstPart := strings.TrimSuffix(parts[0], ".")
 
 	// Get the array that contains the first wildcard
-	arrayResult := gjson.Get(jstr, firstPart)
+	var arrayResult gjson.Result
+	if firstPart == "" {
+		// Handle root array case (path starts with #)
+		arrayResult = gjson.Parse(jstr)
+	} else {
+		arrayResult = gjson.Get(jstr, firstPart)
+	}
 	if !arrayResult.Exists() || !arrayResult.IsArray() {
 		return []byte(jstr), errNoChange
 	}
@@ -703,7 +709,14 @@ func setNestedWildcards(jstr, path, raw string, stringify bool) ([]byte, error) 
 		// Try to set the value - this will handle both existing and new properties
 		if updated, err := SetOptions(value.Raw, remainingPath, rawVal, nil); err == nil {
 			// Always update, even if the value looks the same (because we want to add new properties)
-			if newResult, err := SetRaw(result, firstPart+"."+key.String(), updated); err == nil {
+			var updatePath string
+			if firstPart == "" {
+				// Root array case
+				updatePath = key.String()
+			} else {
+				updatePath = firstPart + "." + key.String()
+			}
+			if newResult, err := SetRaw(result, updatePath, updated); err == nil {
 				result = newResult
 			}
 		}
