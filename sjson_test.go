@@ -611,3 +611,167 @@ func TestRootArrayWildcards(t *testing.T) {
 		t.Fatalf("expected '%v', got '%v'", expected3, result3)
 	}
 }
+
+func TestWildcardDeletion(t *testing.T) {
+	// Test simple wildcard deletion
+	json := `{"users":[{"name":"John","age":30},{"name":"Jane","age":25}]}`
+	expected := `{"users":[{"name":"John"},{"name":"Jane"}]}`
+
+	result, err := Delete(json, "users.#.age")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result) != sortJSON(expected) {
+		t.Fatalf("expected '%v', got '%v'", expected, result)
+	}
+
+	// Test nested wildcard deletion
+	json2 := `{"teams":[{"members":[{"id":1,"active":true},{"id":2,"active":false}]},{"members":[{"id":3,"active":true}]}]}`
+	expected2 := `{"teams":[{"members":[{"id":1},{"id":2}]},{"members":[{"id":3}]}]}`
+
+	result2, err := Delete(json2, "teams.#.members.#.active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result2) != sortJSON(expected2) {
+		t.Fatalf("expected '%v', got '%v'", expected2, result2)
+	}
+
+	// Test root array wildcard deletion
+	json3 := `[{"name":"John","age":30},{"name":"Jane","age":25}]`
+	expected3 := `[{"name":"John"},{"name":"Jane"}]`
+
+	result3, err := Delete(json3, "#.age")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result3) != sortJSON(expected3) {
+		t.Fatalf("expected '%v', got '%v'", expected3, result3)
+	}
+
+	// Test user's specific case - deletion with nested wildcards
+	json4 := `[{"env": [{"name": "AWS_ACCESS_KEY_ID", "value": "test"}]}]`
+	expected4 := `[{"env": [{"name": "AWS_ACCESS_KEY_ID"}]}]`
+
+	result4, err := Delete(json4, "#.env.#.value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result4) != sortJSON(expected4) {
+		t.Fatalf("expected '%v', got '%v'", expected4, result4)
+	}
+}
+
+func TestWildcardDeletionEdgeCases(t *testing.T) {
+	// Test deletion from empty arrays
+	json := `{"data":[]}`
+	expected := `{"data":[]}`
+
+	result, err := Delete(json, "data.#.value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result) != sortJSON(expected) {
+		t.Fatalf("expected '%v', got '%v'", expected, result)
+	}
+
+	// Test deletion of non-existent fields
+	json2 := `{"items":[{"name":"test"}]}`
+	expected2 := `{"items":[{"name":"test"}]}`
+
+	result2, err := Delete(json2, "items.#.nonexistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result2) != sortJSON(expected2) {
+		t.Fatalf("expected '%v', got '%v'", expected2, result2)
+	}
+
+	// Test deletion with mixed existing and non-existent fields
+	json3 := `{"items":[{"name":"test","id":1},{"name":"test2"}]}`
+	expected3 := `{"items":[{"name":"test"},{"name":"test2"}]}`
+
+	result3, err := Delete(json3, "items.#.id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result3) != sortJSON(expected3) {
+		t.Fatalf("expected '%v', got '%v'", expected3, result3)
+	}
+
+	// Test deep nested deletion
+	json4 := `{"level1":[{"level2":[{"level3":[{"level4":[{"level5":[{"value":1,"keep":"this"}]}]}]}]}]}`
+	expected4 := `{"level1":[{"level2":[{"level3":[{"level4":[{"level5":[{"keep":"this"}]}]}]}]}]}`
+
+	result4, err := Delete(json4, "level1.#.level2.#.level3.#.level4.#.level5.#.value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result4) != sortJSON(expected4) {
+		t.Fatalf("expected '%v', got '%v'", expected4, result4)
+	}
+}
+
+func TestWildcardDeletionComplexStructures(t *testing.T) {
+	// Test deletion in complex nested structures
+	json := `{"departments":[{"employees":[{"details":{"salary":50000,"benefits":{"health":true,"dental":false},"temp":"remove"}}]}]}`
+	expected := `{"departments":[{"employees":[{"details":{"salary":50000,"benefits":{"health":true,"dental":false}}}]}]}`
+
+	result, err := Delete(json, "departments.#.employees.#.details.temp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result) != sortJSON(expected) {
+		t.Fatalf("expected '%v', got '%v'", expected, result)
+	}
+
+	// Test deletion of entire nested objects
+	json2 := `{"data":[{"config":{"old":"value","settings":{"a":1,"b":2}},"keep":"this"}]}`
+	expected2 := `{"data":[{"config":{"old":"value"},"keep":"this"}]}`
+
+	result2, err := Delete(json2, "data.#.config.settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result2) != sortJSON(expected2) {
+		t.Fatalf("expected '%v', got '%v'", expected2, result2)
+	}
+}
+
+func TestUserRequestedWildcardDeletion(t *testing.T) {
+	// User's exact scenario: Delete field using #.env.#.value
+	json := `[{"env": [{"name": "AWS_ACCESS_KEY_ID", "value": "test"}]}]`
+	expected := `[{"env": [{"name": "AWS_ACCESS_KEY_ID"}]}]`
+
+	result, err := Delete(json, "#.env.#.value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result) != sortJSON(expected) {
+		t.Fatalf("User's scenario failed. Expected '%v', got '%v'", expected, result)
+	}
+
+	// More complex scenario with multiple nested elements
+	json2 := `[{"env": [{"name": "AWS_ACCESS_KEY_ID", "value": "test"}, {"name": "SECRET", "value": "secret"}]}, {"env": [{"name": "API_KEY", "value": "key"}]}]`
+	expected2 := `[{"env": [{"name": "AWS_ACCESS_KEY_ID"}, {"name": "SECRET"}]}, {"env": [{"name": "API_KEY"}]}]`
+
+	result2, err := Delete(json2, "#.env.#.value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result2) != sortJSON(expected2) {
+		t.Fatalf("Complex scenario failed. Expected '%v', got '%v'", expected2, result2)
+	}
+
+	// Verify deletion with arrays and nested # works for different patterns
+	json3 := `{"configs": [{"settings": [{"key": "timeout", "value": 30}, {"key": "retry", "value": 3}]}]}`
+	expected3 := `{"configs": [{"settings": [{"key": "timeout"}, {"key": "retry"}]}]}`
+
+	result3, err := Delete(json3, "configs.#.settings.#.value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sortJSON(result3) != sortJSON(expected3) {
+		t.Fatalf("Nested settings scenario failed. Expected '%v', got '%v'", expected3, result3)
+	}
+}
