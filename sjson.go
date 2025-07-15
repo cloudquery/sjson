@@ -560,11 +560,7 @@ func set(jstr, path, raw string,
 		}
 	}
 	if !simple {
-		if del {
-			return []byte(jstr),
-				&errorType{"cannot delete value from a complex path"}
-		}
-		return setComplexPath(jstr, path, raw, stringify)
+		return setComplexPath(jstr, path, raw, stringify, del)
 	}
 	njson, err := appendRawPaths(nil, jstr, paths, raw, stringify, del)
 	if err != nil {
@@ -573,7 +569,7 @@ func set(jstr, path, raw string,
 	return njson, nil
 }
 
-func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
+func setComplexPath(jstr, path, raw string, stringify, del bool) ([]byte, error) {
 	res := gjson.Get(jstr, path)
 	if !res.Exists() {
 		return []byte(jstr), errNoChange
@@ -581,49 +577,98 @@ func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 
 	// Handle nested wildcards by processing each level separately
 	if countSimpleWildcards(path) > 1 || (res.Index == 0 && len(res.Indexes) == 0 && countSimpleWildcards(path) == 1) {
-		return setNestedWildcards(jstr, path, raw, stringify)
+		return setNestedWildcards(jstr, path, raw, stringify, del)
 	}
 
 	if res.Index != 0 && len(res.Indexes) == 0 {
-		njson := []byte(jstr[:res.Index])
-		if stringify {
-			njson = appendStringify(njson, raw)
+		if del {
+			// For deletion of single values, we use the built-in deletion logic
+			// by calling Delete function which properly handles key removal
+			result, err := Delete(jstr, path)
+			if err != nil {
+				return []byte(jstr), err
+			}
+			return []byte(result), nil
 		} else {
-			njson = append(njson, raw...)
-		}
-		njson = append(njson, jstr[res.Index+len(res.Raw):]...)
-		jstr = string(njson)
-	}
-	if len(res.Indexes) > 0 {
-		type val struct {
-			index int
-			res   gjson.Result
-		}
-		vals := make([]val, 0, len(res.Indexes))
-		res.ForEach(func(_, vres gjson.Result) bool {
-			vals = append(vals, val{res: vres})
-			return true
-		})
-		if len(res.Indexes) != len(vals) {
-			return []byte(jstr), errNoChange
-		}
-		for i := 0; i < len(res.Indexes); i++ {
-			vals[i].index = res.Indexes[i]
-		}
-		sort.SliceStable(vals, func(i, j int) bool {
-			return vals[i].index > vals[j].index
-		})
-		for _, val := range vals {
-			vres := val.res
-			index := val.index
-			njson := []byte(jstr[:index])
+			njson := []byte(jstr[:res.Index])
 			if stringify {
 				njson = appendStringify(njson, raw)
 			} else {
 				njson = append(njson, raw...)
 			}
-			njson = append(njson, jstr[index+len(vres.Raw):]...)
+			njson = append(njson, jstr[res.Index+len(res.Raw):]...)
 			jstr = string(njson)
+		}
+	}
+	if len(res.Indexes) > 0 {
+		if del {
+			// For deletion with wildcards, iterate through results and delete individually
+			// We'll work backwards through the string to avoid index shift issues
+			type deletion struct {
+				start int
+				end   int
+				key   string
+			}
+			var deletions []deletion
+
+			res.ForEach(func(key, vres gjson.Result) bool {
+				// Calculate the deletion range for this key-value pair
+				// We need to delete the entire key-value pair, including commas
+				deletions = append(deletions, deletion{
+					start: vres.Index,
+					end:   vres.Index + len(vres.Raw),
+					key:   key.String(),
+				})
+				return true
+			})
+
+			// Sort by start position in reverse order
+			sort.Slice(deletions, func(i, j int) bool {
+				return deletions[i].start > deletions[j].start
+			})
+
+			// Apply deletions from end to beginning
+			result := []byte(jstr)
+			for _, del := range deletions {
+				// Use the existing Delete function for proper key removal
+				exactPath := strings.Replace(path, "#", del.key, 1)
+				if newResult, err := Delete(string(result), exactPath); err == nil {
+					result = []byte(newResult)
+				}
+			}
+			return result, nil
+		} else {
+			// Setting values with wildcards (existing logic)
+			type val struct {
+				index int
+				res   gjson.Result
+			}
+			vals := make([]val, 0, len(res.Indexes))
+			res.ForEach(func(_, vres gjson.Result) bool {
+				vals = append(vals, val{res: vres})
+				return true
+			})
+			if len(res.Indexes) != len(vals) {
+				return []byte(jstr), errNoChange
+			}
+			for i := 0; i < len(res.Indexes); i++ {
+				vals[i].index = res.Indexes[i]
+			}
+			sort.SliceStable(vals, func(i, j int) bool {
+				return vals[i].index > vals[j].index
+			})
+			for _, val := range vals {
+				vres := val.res
+				index := val.index
+				njson := []byte(jstr[:index])
+				if stringify {
+					njson = appendStringify(njson, raw)
+				} else {
+					njson = append(njson, raw...)
+				}
+				njson = append(njson, jstr[index+len(vres.Raw):]...)
+				jstr = string(njson)
+			}
 		}
 	}
 	return []byte(jstr), nil
@@ -656,7 +701,7 @@ func countSimpleWildcards(path string) int {
 	return count
 }
 
-func setNestedWildcards(jstr, path, raw string, stringify bool) ([]byte, error) {
+func setNestedWildcards(jstr, path, raw string, stringify, del bool) ([]byte, error) {
 	// Split the path at the first wildcard
 	parts := strings.Split(path, "#")
 	if len(parts) < 2 {
@@ -667,7 +712,13 @@ func setNestedWildcards(jstr, path, raw string, stringify bool) ([]byte, error) 
 	firstPart := strings.TrimSuffix(parts[0], ".")
 
 	// Get the array that contains the first wildcard
-	arrayResult := gjson.Get(jstr, firstPart)
+	var arrayResult gjson.Result
+	if firstPart == "" {
+		// Handle root array case (path starts with #)
+		arrayResult = gjson.Parse(jstr)
+	} else {
+		arrayResult = gjson.Get(jstr, firstPart)
+	}
 	if !arrayResult.Exists() || !arrayResult.IsArray() {
 		return []byte(jstr), errNoChange
 	}
@@ -700,11 +751,35 @@ func setNestedWildcards(jstr, path, raw string, stringify bool) ([]byte, error) 
 			}
 		}
 
-		// Try to set the value - this will handle both existing and new properties
-		if updated, err := SetOptions(value.Raw, remainingPath, rawVal, nil); err == nil {
-			// Always update, even if the value looks the same (because we want to add new properties)
-			if newResult, err := SetRaw(result, firstPart+"."+key.String(), updated); err == nil {
-				result = newResult
+		if del {
+			// For deletion, try to delete the specified path within each array element
+			if updated, err := Delete(value.Raw, remainingPath); err == nil {
+				// Update the array element with the result after deletion
+				var updatePath string
+				if firstPart == "" {
+					// Root array case
+					updatePath = key.String()
+				} else {
+					updatePath = firstPart + "." + key.String()
+				}
+				if newResult, err := SetRaw(result, updatePath, updated); err == nil {
+					result = newResult
+				}
+			}
+		} else {
+			// Try to set the value - this will handle both existing and new properties
+			if updated, err := SetOptions(value.Raw, remainingPath, rawVal, nil); err == nil {
+				// Always update, even if the value looks the same (because we want to add new properties)
+				var updatePath string
+				if firstPart == "" {
+					// Root array case
+					updatePath = key.String()
+				} else {
+					updatePath = firstPart + "." + key.String()
+				}
+				if newResult, err := SetRaw(result, updatePath, updated); err == nil {
+					result = newResult
+				}
 			}
 		}
 		return true
