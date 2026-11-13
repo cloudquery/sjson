@@ -775,3 +775,23 @@ func TestUserRequestedWildcardDeletion(t *testing.T) {
 		t.Fatalf("Nested settings scenario failed. Expected '%v', got '%v'", expected3, result3)
 	}
 }
+
+func TestOptimisticSize(t *testing.T) {
+	size, ok := optimisticSize(100, 10, 5, false)
+	if !ok || size != 95 {
+		t.Fatalf("expected 95 true, got %d %v", size, ok)
+	}
+	size, ok = optimisticSize(100, 10, 5, true)
+	if !ok || size != 97 {
+		t.Fatalf("expected 97 true, got %d %v", size, ok)
+	}
+	for _, sizes := range [][3]int{
+		{maxOptimisticSize + 1, 0, 0},
+		{0, maxOptimisticSize + 1, 0},
+		{0, 0, maxOptimisticSize + 1},
+	} {
+		if _, ok := optimisticSize(sizes[0], sizes[1], sizes[2], false); ok {
+			t.Fatalf("expected size %v to be rejected", sizes)
+		}
+	}
+}

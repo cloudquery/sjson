@@ -503,6 +503,20 @@ type sliceHeader struct {
 	cap  int
 }
 
+const maxOptimisticSize = 1 << 29
+
+func optimisticSize(jsonLen, replacedLen, rawLen int, stringify bool) (int, bool) {
+	if jsonLen > maxOptimisticSize || replacedLen > maxOptimisticSize ||
+		rawLen > maxOptimisticSize {
+		return 0, false
+	}
+	size := jsonLen - replacedLen + rawLen
+	if stringify {
+		size += 2
+	}
+	return size, true
+}
+
 func set(jstr, path, raw string,
 	stringify, del, optimistic, inplace bool) ([]byte, error) {
 	if path == "" {
@@ -510,11 +524,8 @@ func set(jstr, path, raw string,
 	}
 	if !del && optimistic && isOptimisticPath(path) {
 		res := gjson.Get(jstr, path)
-		if res.Exists() && res.Index > 0 {
-			sz := len(jstr) - len(res.Raw) + len(raw)
-			if stringify {
-				sz += 2
-			}
+		sz, sizeOK := optimisticSize(len(jstr), len(res.Raw), len(raw), stringify)
+		if res.Exists() && res.Index > 0 && sizeOK {
 			if inplace && sz <= len(jstr) {
 				if !stringify || !mustMarshalString(raw) {
 					jsonh := *(*stringHeader)(unsafe.Pointer(&jstr))
